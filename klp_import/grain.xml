@@ -4,7 +4,7 @@
   <version>1.0.0</version>
   <title>KLP SEM Image Importer</title>
   <description>Automated SEM image import for KLayout using .klp files.</description>
-  <author>Shashank Arunkumar</author>
+  <author>Shashank Arunkumar/ Institut Néel,CNRS</author>
   <license>MIT</license>
   <doc>README.md</doc>
 </salt-grain>
