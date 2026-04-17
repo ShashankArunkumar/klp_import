@@ -3,5 +3,5 @@
  <name>klp_importer</name>
  <description>Automated SEM image import for KLayout</description>
  <version>1.0.0</version>
- <author>Shashank Arunkumar</author>
+ <author>ShashankArunkumar</author>
 </package>
