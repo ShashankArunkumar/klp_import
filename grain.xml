@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <package>
- <name>klp_importer</name>
+ <name>klp_import</name>
  <description>Automated SEM image import for KLayout</description>
  <version>1.0.0</version>
- <author>ShashankArunkumar</author>
+ <author>Shashank Arunkumar</author>
+ <doc>README.md</doc>
 </package>
