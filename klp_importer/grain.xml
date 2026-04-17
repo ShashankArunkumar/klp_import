@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <package>
-  <description>KLP Image Importer</description>
+  <description>klp_importer</description>
   <version>1.0.0</version>
   <author>Shashank ARUNKUMAR / Institut Néel,CNRS</author>
   <doc-url></doc-url>
