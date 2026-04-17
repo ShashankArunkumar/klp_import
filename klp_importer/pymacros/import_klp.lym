@@ -1,0 +1,240 @@
+# $description: Import Transformed Image
+# $show-in-menu
+# $shortcut: Ctrl+Shift+I
+import pya
+import re
+import os
+import math
+
+# ──────────────────────────────────────────────
+#  CONFIGURATION
+# ──────────────────────────────────────────────
+IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')
+
+def parse_transform_file(filepath):
+    """Parse the transformation .klp file into a dictionary."""
+    with open(filepath, 'r', encoding='latin-1') as f:
+        content = f.read()
+
+    params = {}
+    patterns = {
+        'initial_rotation': r'Initial rotation \(deg\)\s*=\s*([\d.\-]+)',
+        'center':           r'Transformation center\s*=\s*([\d.\-]+),\s*([\d.\-]+)',
+        'pixel_size':       r'Pixel Size \(µm\)\s*=\s*([\d.\-]+),\s*([\d.\-]+)',
+        'shear':            r'Transformation shear\s*=\s*([\d.\-]+)',
+        'mx':               r'Transformation mx\s*=\s*([\d.\-]+)',
+        'my':               r'Transformation my\s*=\s*([\d.\-]+)',
+        'rotation':         r'Transformation rotation\s*=\s*([\d.\-]+)',
+    }
+    for key, pattern in patterns.items():
+        match = re.search(pattern, content)
+        if match:
+            if len(match.groups()) == 2:
+                params[key] = (float(match.group(1)), float(match.group(2)))
+            else:
+                params[key] = float(match.group(1))
+    return params
+
+def find_klp_for_image(image_path):
+    """Auto-pair: look for a .klp with the same base name as the image."""
+    base = os.path.splitext(image_path)[0]
+    klp_path = base + '.klp'
+    return klp_path if os.path.exists(klp_path) else None
+
+def import_single(cv, image_path, klp_path):
+    """
+    Parse the .klp and insert the image into the current view.
+    """
+    try:
+        p = parse_transform_file(klp_path)
+    except Exception as e:
+        return False, f"Could not parse {os.path.basename(klp_path)}:\n{e}"
+
+    # Extract exactly as degree/micron values
+    pixel_w  = p.get('mx', 1.0)
+    pixel_h  = p.get('my', 1.0)
+    center_x = p['center'][0] if 'center' in p else 0.0
+    center_y = p['center'][1] if 'center' in p else 0.0
+    rot_deg  = p.get('rotation', 0.0)
+    shear_deg= p.get('shear', 0.0)
+
+    try:
+        image = pya.Image(image_path)
+        
+        # ── Construct the KLayout Matrix3d ──────────────────────────
+        # KLayout requires all geometric data to be passed as a 3x3 matrix.
+        
+        # 1. Scale (Pixel Size)
+        m_scale = pya.Matrix3d(pixel_w, 0.0,     0.0, 
+                               0.0,     pixel_h, 0.0, 
+                               0.0,     0.0,     1.0)
+        
+        # 2. Shear
+        tan_s = math.tan(math.radians(shear_deg))
+        m_shear = pya.Matrix3d(1.0, tan_s, 0.0, 
+                               0.0, 1.0,   0.0, 
+                               0.0, 0.0,   1.0)
+        
+        # 3. Rotation
+        r_rad = math.radians(rot_deg)
+        c = math.cos(r_rad)
+        s = math.sin(r_rad)
+        m_rot = pya.Matrix3d(c,   -s,  0.0, 
+                             s,    c,  0.0, 
+                             0.0,  0.0, 1.0)
+        
+        # 4. Translation (Center coordinates)
+        m_trans = pya.Matrix3d(1.0, 0.0, center_x, 
+                               0.0, 1.0, center_y, 
+                               0.0, 0.0, 1.0)
+        
+        # Multiply them together: Translation * Rotation * Shear * Scale
+        image.matrix = m_trans * m_rot * m_shear * m_scale
+        
+        # Insert image into layout
+        cv.insert_image(image)
+
+    except Exception as e:
+        return False, f"Could not insert {os.path.basename(image_path)}:\n{e}"
+
+    return True, (
+        f"✔ {os.path.basename(image_path)}\n"
+        f"   Center: ({center_x:.4f}, {center_y:.4f}) µm\n"
+        f"   Pixel:  {pixel_w:.6f} × {pixel_h:.6f} µm\n"
+        f"   Rotation: {rot_deg:.4f}°  Shear: {shear_deg:.4f}°"
+    )
+
+def run():
+    app = pya.Application.instance()
+    mw  = app.main_window()
+
+    cv = mw.current_view()
+    if cv is None:
+        pya.MessageBox.warning(
+            "Error", "No layout open. Please open a layout first.",
+            pya.MessageBox.Ok
+        )
+        return
+
+    # ── Mode selection ──────────────────────────────────────────
+    msg = pya.QMessageBox()
+    msg.setWindowTitle("Import mode")
+    msg.setText("How do you want to import?")
+    
+    btn_single = msg.addButton("Single", pya.QMessageBox.ActionRole)
+    btn_batch  = msg.addButton("Batch", pya.QMessageBox.ActionRole)
+    btn_cancel = msg.addButton("Cancel", pya.QMessageBox.RejectRole)
+    
+    msg.exec_()
+    
+    clicked = msg.clickedButton()
+    
+    if clicked == btn_cancel:
+        return
+
+    # ── SINGLE import ───────────────────────────────────────────
+    if clicked == btn_single:
+        image_path = pya.FileDialog.ask_open_file_name(
+            "Select image file", "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff);;All files (*)"
+        )
+        if not image_path:
+            return
+
+        klp_path = find_klp_for_image(image_path)
+        if klp_path:
+            pya.MessageBox.info(
+                "Parameter file found",
+                f"Auto-paired with:\n{os.path.basename(klp_path)}",
+                pya.MessageBox.Ok
+            )
+        else:
+            pya.MessageBox.warning(
+                "No matching .klp found",
+                f"Could not find a .klp with the same name.\n"
+                f"Please select the parameter file manually.",
+                pya.MessageBox.Ok
+            )
+            klp_path = pya.FileDialog.ask_open_file_name(
+                "Select transformation parameter file", "",
+                "KLP files (*.klp);;All files (*)"
+            )
+            if not klp_path:
+                return
+
+        ok, msg = import_single(cv, image_path, klp_path)
+        cv.zoom_fit()
+
+        if ok:
+            pya.MessageBox.info("Import complete", msg, pya.MessageBox.Ok)
+        else:
+            pya.MessageBox.warning("Import failed", msg, pya.MessageBox.Ok)
+
+    # ── BATCH import ────────────────────────────────────────────
+    elif clicked == btn_batch:
+        folder = pya.FileDialog.ask_existing_dir(
+            "Select folder containing images and .klp files", ""
+        )
+        if not folder:
+            return
+
+        pairs   = []
+        missing = []
+        for fname in sorted(os.listdir(folder)):
+            if fname.lower().endswith(IMAGE_EXTENSIONS):
+                image_path = os.path.join(folder, fname)
+                klp_path   = find_klp_for_image(image_path)
+                if klp_path:
+                    pairs.append((image_path, klp_path))
+                else:
+                    missing.append(fname)
+
+        if not pairs:
+            pya.MessageBox.warning(
+                "Nothing to import",
+                f"No image+klp pairs found in:\n{folder}\n\n"
+                f"Make sure each image has a matching .klp file.",
+                pya.MessageBox.Ok
+            )
+            return
+
+        if missing:
+            pya.MessageBox.warning(
+                "Some files skipped",
+                f"The following images have no matching .klp and will be skipped:\n\n" +
+                "\n".join(missing),
+                pya.MessageBox.Ok
+            )
+
+        confirm = pya.MessageBox.question(
+            "Confirm batch import",
+            f"Found {len(pairs)} image(s) to import from:\n{folder}\n\nProceed?",
+            pya.MessageBox.Yes | pya.MessageBox.No
+        )
+        if confirm != pya.MessageBox.Yes:
+            return
+
+        results_ok  = []
+        results_err = []
+        for image_path, klp_path in pairs:
+            ok, msg = import_single(cv, image_path, klp_path)
+            if ok:
+                results_ok.append(msg)
+            else:
+                results_err.append(msg)
+
+        cv.zoom_fit()
+
+        summary = (
+            f"Batch import complete.\n\n"
+            f"✔ {len(results_ok)} succeeded\n"
+            f"✘ {len(results_err)} failed\n\n"
+        )
+        if results_ok:
+            summary += "── Imported ──\n" + "\n".join(results_ok)
+        if results_err:
+            summary += "\n\n── Errors ──\n" + "\n".join(results_err)
+
+        pya.MessageBox.info("Batch complete", summary, pya.MessageBox.Ok)
+
+run()
