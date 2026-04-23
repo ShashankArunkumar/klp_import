@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="utf-8"?>
+<klayout-macro>
+ <description>Coordinate Picker</description>
+ <version/>
+ <category>pymacros</category>
+ <prolog/>
+ <epilog/>
+ <doc/>
+ <autorun>false</autorun>
+ <autorun-early>false</autorun-early>
+ <shortcut>Ctrl+Shift+I</shortcut>
+ <show-in-menu>true</show-in-menu>
+ <group-name/>
+ <menu-path/>
+ <interpreter>python</interpreter>
+ <dsl-interpreter-name/>
+ <text>
+import pya
+
+POINT_LABELS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+
+class ClickFactory(pya.PluginFactory):
+    plugin = None
+
+    def create_plugin(self, manager, root, view):
+        self.plugin = ClickPlugin()
+        return self.plugin
+
+
+class ClickPlugin(pya.Plugin):
+    on_click = None
+
+    def _handle_mouse_capture(self, p, buttons):
+        # Some KLayout events provide modifier flags rather than mouse-button bits.
+        # If capture is armed, accept the first click event regardless of button mask.
+        if ClickPlugin.on_click:
+            cb = ClickPlugin.on_click
+            ClickPlugin.on_click = None
+            cb(p.x, p.y)
+            return True
+        return False
+
+    def mouse_button_pressed_event(self, p, buttons, prio):
+        return self._handle_mouse_capture(p, buttons)
+
+    def mouse_click_event(self, p, buttons, prio):
+        return self._handle_mouse_capture(p, buttons)
+
+    def activated(self):   pass
+    def deactivated(self): pass
+
+
+class CoordinatePickerMacro:
+
+    def __init__(self):
+        self.mw              = pya.MainWindow.instance()
+        self.view            = pya.LayoutView.current()
+        self.num_points      = 0
+        self.points          = {}
+        self.idx             = 0
+        self.current_capture = None
+        self.mode_name       = "coord_picker_v5"
+        self.factory         = ClickFactory()
+        self.factory.register(100000, self.mode_name, "Coordinate Picker")
+
+    def run(self):
+        if self.view is None:
+            pya.QMessageBox.critical(self.mw, "Error", "No layout open.")
+            return
+
+        dlg = pya.QDialog(self.mw)
+        dlg.setWindowTitle("Coordinate Picker")
+        dlg.setMinimumWidth(300)
+        v = pya.QVBoxLayout(dlg)
+        v.setContentsMargins(16, 16, 16, 16)
+        v.setSpacing(8)
+        v.addWidget(pya.QLabel("How many points?", dlg))
+
+        g = pya.QGridLayout()
+        v.addLayout(g)
+        chosen = [0]
+
+        def mk(n):
+            def h():
+                chosen[0] = n
+                dlg.accept()
+            return h
+
+        for i in range(1, 7):
+            b = pya.QPushButton(str(i), dlg)
+            b.setMinimumHeight(36)
+            b.clicked(mk(i))
+            g.addWidget(b, (i-1)//3, (i-1)%3)
+
+        cx = pya.QPushButton("Cancel", dlg)
+        cx.clicked(dlg.reject)
+        v.addWidget(cx)
+
+        if dlg.exec_() != 1 or chosen[0] == 0:
+            return
+
+        self.num_points = chosen[0]
+        self.build_capture_dialog()
+
+    def build_capture_dialog(self):
+        d = pya.QDialog(self.mw)
+        self.cap_dlg = d
+        d.setWindowTitle("Coordinate Picker")
+        d.setMinimumWidth(340)
+
+        v = pya.QVBoxLayout(d)
+        v.setContentsMargins(16, 16, 16, 16)
+        v.setSpacing(12)
+
+        self.step_lbl = pya.QLabel("", d)
+        v.addWidget(self.step_lbl)
+
+        self.sel_btn = pya.QPushButton("", d)
+        self.sel_btn.setMinimumHeight(36)
+        v.addWidget(self.sel_btn)
+
+        self.coord_lbl = pya.QLabel("", d)
+        self.coord_lbl.setVisible(False)
+        v.addWidget(self.coord_lbl)
+
+        btn_row = pya.QHBoxLayout()
+        v.addLayout(btn_row)
+        self.retake_btn = pya.QPushButton("Retake", d)
+        self.next_btn   = pya.QPushButton("Next", d)
+        self.retake_btn.setMinimumHeight(36)
+        self.next_btn.setMinimumHeight(36)
+        self.retake_btn.setVisible(False)
+        self.next_btn.setVisible(False)
+        btn_row.addWidget(self.retake_btn)
+        btn_row.addWidget(self.next_btn)
+
+        self.cancel_btn = pya.QPushButton("Cancel", d)
+        v.addWidget(self.cancel_btn)
+
+        self.sel_btn.clicked(self.on_select)
+        self.retake_btn.clicked(self.on_retake)
+        self.next_btn.clicked(self.on_next)
+        self.cancel_btn.clicked(self.on_cancel)
+
+        # Timer used to defer UI update into main event loop after canvas click
+        self.timer = pya.QTimer(d)
+        self.timer.setSingleShot(True)
+        self.timer.setInterval(0)
+        self.timer.timeout(self.apply_click_result)
+
+        self.refresh_for_point()
+        d.finished(self.on_dialog_finished)
+        d.show()
+        d.raise_()
+        d.activateWindow()
+
+    def refresh_for_point(self):
+        label = POINT_LABELS[self.idx]
+        self.step_lbl.setText(
+            "Point <b>{}</b>  ({} of {})".format(label, self.idx + 1, self.num_points)
+        )
+        self.sel_btn.setText("Select Point {}".format(label))
+        self.sel_btn.setEnabled(True)
+        self.sel_btn.setVisible(True)
+        self.coord_lbl.setVisible(False)
+        self.retake_btn.setVisible(False)
+        self.next_btn.setVisible(False)
+        self.current_capture = None
+        self.cap_dlg.adjustSize()
+
+    def on_select(self):
+        self._arm_for_layout_click()
+
+    def _arm_for_layout_click(self):
+        self.sel_btn.setText("Now click a point on the Layout...")
+        self.sel_btn.setEnabled(False)
+        ClickPlugin.on_click = self.on_canvas_click
+        self.view.switch_mode(self.mode_name)
+        self.view.widget().setFocus()
+        if self.factory.plugin:
+            self.factory.plugin.grab_mouse()
+
+    def on_canvas_click(self, raw_x, raw_y):
+        # Store raw coords — do NOT touch UI here, we're inside canvas event
+        dbu  = self.view.active_cellview().layout().dbu
+        # Convert to micron (um): raw*dbu is mm in this setup
+        self.current_capture = (raw_x * dbu * 1000.0, raw_y * dbu * 1000.0)
+        if self.factory.plugin:
+            self.factory.plugin.ungrab_mouse()
+        # Fire timer to update UI safely from main event loop
+        self.timer.start()
+
+    def apply_click_result(self):
+        # This runs in the main Qt event loop — safe to update UI
+        x_um, y_um = self.current_capture
+        self.coord_lbl.setText(
+            "<b>X</b> = {:.8f} µm\n<b>Y</b> = {:.8f} µm".format(x_um, y_um)
+        )
+        self.sel_btn.setVisible(False)
+        self.coord_lbl.setVisible(True)
+        self.retake_btn.setVisible(True)
+        self.next_btn.setVisible(True)
+        self.cap_dlg.adjustSize()
+        self.cap_dlg.show()
+        self.cap_dlg.raise_()
+        self.cap_dlg.activateWindow()
+
+    def on_retake(self):
+        ClickPlugin.on_click = None
+        if self.factory.plugin:
+            self.factory.plugin.ungrab_mouse()
+        self.refresh_for_point()
+        self._arm_for_layout_click()
+
+    def on_next(self):
+        if self.current_capture is None:
+            return
+        label = POINT_LABELS[self.idx]
+        self.points[label] = self.current_capture
+        self.idx += 1
+        if self.idx >= self.num_points:
+            self.cap_dlg.accept()
+        else:
+            self.refresh_for_point()
+
+    def on_cancel(self):
+        ClickPlugin.on_click = None
+        if self.factory.plugin:
+            self.factory.plugin.ungrab_mouse()
+        self.cap_dlg.reject()
+
+    def on_dialog_finished(self, result):
+        ClickPlugin.on_click = None
+        if self.factory.plugin:
+            self.factory.plugin.ungrab_mouse()
+        if result == 1 and len(self.points) == self.num_points:
+            self.show_result()
+
+    def show_result(self):
+        inner = ", ".join(
+            '"{}" : [{:.8f}, {:.8f}]'.format(
+                POINT_LABELS[i],
+                self.points[POINT_LABELS[i]][0],
+                self.points[POINT_LABELS[i]][1]
+            )
+            for i in range(self.num_points)
+        )
+        json_str = "{\n     " + inner + "\n}"
+
+        d = pya.QDialog(self.mw)
+        d.setWindowTitle("Captured Coordinates")
+        d.setMinimumWidth(480)
+
+        v = pya.QVBoxLayout(d)
+        v.setContentsMargins(20, 20, 20, 20)
+        v.setSpacing(10)
+
+        v.addWidget(pya.QLabel("<b>Captured Points:</b>", d))
+
+        te = pya.QTextEdit(d)
+        te.setPlainText(json_str)
+        te.setReadOnly(True)
+        te.setMinimumHeight(120)
+        te.setFontFamily("Courier")
+        v.addWidget(te)
+
+        row = pya.QHBoxLayout()
+        v.addLayout(row)
+
+        copy_btn  = pya.QPushButton("Copy to Clipboard", d)
+        close_btn = pya.QPushButton("Close", d)
+        row.addWidget(copy_btn)
+        row.addWidget(close_btn)
+
+        def on_copy():
+            pya.QApplication.clipboard().setText(json_str)
+            copy_btn.setText("Copied!")
+
+        copy_btn.clicked(on_copy)
+        close_btn.clicked(lambda: d.accept())
+
+        d.exec_()
+
+
+_macro = CoordinatePickerMacro()
+_macro.run()

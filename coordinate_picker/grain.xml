@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<salt-grain>
+  <name>coordinate_picker</name>
+  <version>1.0.0</version>
+  <title>GDS Coordinate Picker</title>
+  <description>Saves coordinates from GDS files in JSON format.</description>
+  <author>Shashank Arunkumar/ Institut Néel,CNRS</author>
+  <license>MIT</license>
+  <doc>README.md</doc>
+</salt-grain>
