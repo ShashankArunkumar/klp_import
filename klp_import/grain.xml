@@ -1,7 +1,7 @@
 <?xml version="1.0.2" encoding="utf-8"?>
 <salt-grain>
   <name>klp_importer</name>
-  <version>1.0.0</version>
+  <version>1.0.2</version>
   <title>KLP SEM Image Importer</title>
   <description>Automated SEM image import for KLayout using .klp files.</description>
   <author>Shashank Arunkumar/ Institut Néel,CNRS</author>
