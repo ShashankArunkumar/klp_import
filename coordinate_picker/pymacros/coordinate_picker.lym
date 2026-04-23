@@ -23,6 +23,9 @@ POINT_LABELS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 class ClickFactory(pya.PluginFactory):
     plugin = None
 
+    def __init__(self):
+        self.has_tool_entry = False
+
     def create_plugin(self, manager, root, view):
         self.plugin = ClickPlugin()
         return self.plugin
