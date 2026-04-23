@@ -8,7 +8,7 @@
  <doc/>
  <autorun>false</autorun>
  <autorun-early>false</autorun-early>
- <shortcut>Ctrl+Shift+I</shortcut>
+ <shortcut>Ctrl+Shift+C</shortcut>
  <show-in-menu>true</show-in-menu>
  <group-name/>
  <menu-path/>
